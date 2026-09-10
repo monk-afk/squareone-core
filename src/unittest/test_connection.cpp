@@ -40,6 +40,7 @@ public:
 	void runTests(IGameDef *gamedef);
 
 	void testNetworkPacketSerialize();
+	void testClientInputValidation();
 	void testHelpers();
 	void testConnectSendReceive();
 };
@@ -49,6 +50,7 @@ static TestConnection g_test_instance;
 void TestConnection::runTests(IGameDef *gamedef)
 {
 	TEST(testNetworkPacketSerialize);
+	TEST(testClientInputValidation);
 	TEST(testHelpers);
 	TEST(testConnectSendReceive);
 }
@@ -111,6 +113,40 @@ void TestConnection::testNetworkPacketSerialize()
 
 		UASSERT(pkt_s == L"\U00020b9a");
 	}
+}
+
+void TestConnection::testClientInputValidation()
+{
+	UASSERT(is_valid_client_lang_code(""));
+	UASSERT(is_valid_client_lang_code("pt_BR"));
+	UASSERT(is_valid_client_lang_code("nn-NO"));
+	UASSERT(!is_valid_client_lang_code("en/../../x"));
+	UASSERT(!is_valid_client_lang_code("en\n"));
+	UASSERT(!is_valid_client_lang_code(std::string(CLIENT_LANG_CODE_MAX_LEN + 1, 'a')));
+
+	UASSERT(is_valid_client_version_info("5.10.0"));
+	std::string version_info = "5.10.0";
+	version_info.append(1, '\0').append("Linux").append(1, '\0')
+		.append("Linux/6.12 x86_64");
+	UASSERT(is_valid_client_version_info(version_info));
+	UASSERT(!is_valid_client_version_info(""));
+	UASSERT(!is_valid_client_version_info(std::string("\0bad", 4)));
+	UASSERT(!is_valid_client_version_info("5.10.0\nforged log"));
+	UASSERT(!is_valid_client_version_info(std::string(CLIENT_VERSION_INFO_MAX_LEN + 1, 'a')));
+	version_info.append(1, '\0');
+	UASSERT(!is_valid_client_version_info(version_info));
+
+	UASSERT(is_valid_client_formspec_version(1));
+	UASSERT(is_valid_client_formspec_version(11));
+	UASSERT(is_valid_client_formspec_version(CLIENT_FORMSPEC_VERSION_MAX));
+	UASSERT(!is_valid_client_formspec_version(0));
+	UASSERT(!is_valid_client_formspec_version(CLIENT_FORMSPEC_VERSION_MAX + 1));
+
+	UASSERT(is_valid_media_request_name("default_stone.png"));
+	UASSERT(!is_valid_media_request_name(""));
+	UASSERT(!is_valid_media_request_name("../secret"));
+	UASSERT(!is_valid_media_request_name("forged\nlog.ogg"));
+	UASSERT(!is_valid_media_request_name(std::string(MEDIA_NAME_MAX_LEN + 1, 'a')));
 }
 
 void TestConnection::testHelpers()

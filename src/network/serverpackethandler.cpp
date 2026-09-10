@@ -285,12 +285,25 @@ void Server::handleCommand_Init2(NetworkPacket* pkt)
 	session_t peer_id = pkt->getPeerId();
 	verbosestream << "Server: Got TOSERVER_INIT2 from " << peer_id << std::endl;
 
+	std::string lang;
+	bool valid_lang_packet = pkt->getSize() == 0;
+	if (pkt->getSize() >= 2) {
+		const u16 lang_len = pkt->getU16(0);
+		valid_lang_packet = pkt->getSize() == 2 + lang_len;
+	}
+	if (valid_lang_packet && pkt->getSize() > 0)
+		*pkt >> lang;
+
+	if (!valid_lang_packet || !is_valid_client_lang_code(lang)) {
+		actionstream << "Server: Rejecting invalid language code from "
+			<< getPlayerName(peer_id) << " (peer_id=" << peer_id << ")"
+			<< std::endl;
+		DisconnectPeer(peer_id);
+		return;
+	}
+
 	m_clients.event(peer_id, CSE_GotInit2);
 	u16 protocol_version = m_clients.getProtocolVersion(peer_id);
-
-	std::string lang;
-	if (pkt->getSize() > 0)
-		*pkt >> lang;
 
 	/*
 		Send some initialization data
@@ -345,25 +358,63 @@ void Server::handleCommand_Init2(NetworkPacket* pkt)
 
 void Server::handleCommand_RequestMedia(NetworkPacket* pkt)
 {
-	std::vector<std::string> tosend;
-	u16 numfiles;
-
-	*pkt >> numfiles;
-
 	session_t peer_id = pkt->getPeerId();
-	infostream << "Sending " << numfiles << " files to " <<
-		getPlayerName(peer_id) << std::endl;
-	verbosestream << "TOSERVER_REQUEST_MEDIA: " << std::endl;
+	auto reject_request = [&](const char *reason) {
+		actionstream << "Server: Rejecting invalid media request from "
+			<< getPlayerName(peer_id) << " (peer_id=" << peer_id
+			<< "): " << reason << std::endl;
+		DisconnectPeer(peer_id);
+	};
+
+	if (pkt->getSize() < 2) {
+		reject_request("packet is too short");
+		return;
+	}
+
+	u16 numfiles;
+	*pkt >> numfiles;
+	if (numfiles > m_media.size()) {
+		reject_request("file count exceeds server media count");
+		return;
+	}
+
+	std::unordered_set<std::string> tosend;
 
 	for (u16 i = 0; i < numfiles; i++) {
-		std::string name;
+		if (pkt->getRemainingBytes() < 2) {
+			reject_request("truncated filename");
+			return;
+		}
 
+		const u32 offset = pkt->getSize() - pkt->getRemainingBytes();
+		const u16 name_len = pkt->getU16(offset);
+		if (pkt->getRemainingBytes() < 2 + name_len) {
+			reject_request("truncated filename");
+			return;
+		}
+
+		std::string name;
 		*pkt >> name;
 
-		tosend.push_back(name);
-		verbosestream << "TOSERVER_REQUEST_MEDIA: requested file "
-				<< name << std::endl;
+		if (!is_valid_media_request_name(name) ||
+				m_media.find(name) == m_media.end()) {
+			reject_request("invalid or unknown filename");
+			return;
+		}
+
+		tosend.emplace(name);
 	}
+
+	if (pkt->getRemainingBytes() != 0) {
+		reject_request("unexpected trailing data");
+		return;
+	}
+
+	verbosestream << "Client " << getPlayerName(peer_id)
+		<< " requested media file(s):\n";
+	for (const auto &name : tosend)
+		verbosestream << "  " << name << "\n";
+	verbosestream << std::flush;
 
 	sendRequestedMedia(peer_id, tosend);
 }
@@ -372,8 +423,48 @@ void Server::handleCommand_ClientReady(NetworkPacket* pkt)
 {
 	session_t peer_id = pkt->getPeerId();
 
-	PlayerSAO* playersao = StageTwoClientInit(peer_id);
+	auto reject_client_info = [&](const char *reason) {
+		actionstream << "Server: Rejecting invalid client metadata from "
+			<< getPlayerName(peer_id) << " (peer_id=" << peer_id
+			<< "): " << reason << std::endl;
+		DisconnectPeer(peer_id);
+	};
 
+	if (pkt->getSize() < 6) {
+		reject_client_info("packet is too short");
+		return;
+	}
+
+	const u16 version_info_len = pkt->getU16(4);
+	const u32 base_size = 6 + version_info_len;
+	if (pkt->getSize() != base_size && pkt->getSize() != base_size + 2) {
+		reject_client_info("inconsistent packet length");
+		return;
+	}
+
+	u8 major_ver, minor_ver, patch_ver, reserved;
+	u16 formspec_ver = 1; // v1 for clients older than 5.1.0-dev
+	std::string full_ver;
+	*pkt >> major_ver >> minor_ver >> patch_ver >> reserved >> full_ver;
+	if (pkt->getRemainingBytes() == 2)
+		*pkt >> formspec_ver;
+
+	if (reserved != 0) {
+		reject_client_info("reserved field is non-zero");
+		return;
+	}
+	if (!is_valid_client_version_info(full_ver)) {
+		reject_client_info("invalid version string");
+		return;
+	}
+	if (!is_valid_client_formspec_version(formspec_ver)) {
+		reject_client_info("invalid formspec version");
+		return;
+	}
+
+	m_clients.setClientVersion(peer_id, major_ver, minor_ver, patch_ver, full_ver);
+
+	PlayerSAO* playersao = StageTwoClientInit(peer_id);
 	if (playersao == NULL) {
 		errorstream << "TOSERVER_CLIENT_READY stage 2 client init failed "
 			"peer_id=" << peer_id << std::endl;
@@ -381,23 +472,7 @@ void Server::handleCommand_ClientReady(NetworkPacket* pkt)
 		return;
 	}
 
-
-	if (pkt->getSize() < 8) {
-		errorstream << "TOSERVER_CLIENT_READY client sent inconsistent data, "
-			"disconnecting peer_id: " << peer_id << std::endl;
-		DisconnectPeer(peer_id);
-		return;
-	}
-
-	u8 major_ver, minor_ver, patch_ver, reserved;
-	std::string full_ver;
-	*pkt >> major_ver >> minor_ver >> patch_ver >> reserved >> full_ver;
-
-	m_clients.setClientVersion(peer_id, major_ver, minor_ver, patch_ver,
-		full_ver);
-
-	if (pkt->getRemainingBytes() >= 2)
-		*pkt >> playersao->getPlayer()->formspec_version;
+	playersao->getPlayer()->formspec_version = formspec_ver;
 
 	const std::vector<std::string> &players = m_clients.getPlayerNames();
 	NetworkPacket list_pkt(TOCLIENT_UPDATE_PLAYER_LIST, 0, peer_id);

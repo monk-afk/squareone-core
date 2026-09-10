@@ -29,10 +29,11 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "porting.h"
 
 #include <list>
-#include <vector>
-#include <set>
 #include <memory>
 #include <mutex>
+#include <set>
+#include <unordered_set>
+#include <vector>
 
 class MapBlock;
 class ServerEnvironment;
@@ -282,6 +283,11 @@ public:
 		return m_blocks_sent.find(p) != m_blocks_sent.end();
 	}
 
+	bool markMediaSent(const std::string &name)
+	{
+		return m_media_sent.emplace(name).second;
+	}
+
 	// Increments timeouts and removes timed-out blocks from list
 	// NOTE: This doesn't fix the server-not-sending-block bug
 	//       because it is related to emerging, not sending.
@@ -382,6 +388,7 @@ private:
 		No MapBlock* is stored here because the blocks can get deleted.
 	*/
 	std::set<v3s16> m_blocks_sent;
+	std::unordered_set<std::string> m_media_sent;
 	s16 m_nearest_unsent_d = 0;
 	v3s16 m_last_center;
 	v3f m_last_camera_dir;

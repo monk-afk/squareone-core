@@ -42,6 +42,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include <string>
 #include <list>
 #include <map>
+#include <unordered_set>
 #include <vector>
 
 class ChatEvent;
@@ -486,7 +487,7 @@ private:
 	void fillMediaCache();
 	void sendMediaAnnouncement(session_t peer_id, const std::string &lang_code);
 	void sendRequestedMedia(session_t peer_id,
-			const std::vector<std::string> &tosend);
+			const std::unordered_set<std::string> &tosend);
 
 	// Adds a ParticleSpawner on peer with peer_id (PEER_ID_INEXISTENT == all)
 	void SendAddParticleSpawner(session_t peer_id, u16 protocol_version,

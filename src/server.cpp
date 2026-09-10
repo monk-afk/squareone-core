@@ -2758,10 +2758,11 @@ struct SendableMedia
 };
 
 void Server::sendRequestedMedia(session_t peer_id,
-		const std::vector<std::string> &tosend)
+		const std::unordered_set<std::string> &tosend)
 {
-	verbosestream<<"Server::sendRequestedMedia(): "
-			<<"Sending files to client"<<std::endl;
+	RemoteClient *client = getClient(peer_id, CS_DefinitionsSent);
+	infostream << "Server::sendRequestedMedia(): Sending " << tosend.size()
+		<< " files to " << client->getName() << std::endl;
 
 	/* Read files */
 
@@ -2775,14 +2776,20 @@ void Server::sendRequestedMedia(session_t peer_id,
 
 	const u16 protocol_version = m_clients.getProtocolVersion(peer_id);
 	for (const std::string &name : tosend) {
-		if (m_media.find(name) == m_media.end()) {
+		auto media_it = m_media.find(name);
+		if (media_it == m_media.end()) {
 			errorstream<<"Server::sendRequestedMedia(): Client asked for "
 					<<"unknown file \""<<(name)<<"\""<<std::endl;
 			continue;
 		}
+		if (!client->markMediaSent(name)) {
+			infostream << "Server::sendRequestedMedia(): Client already requested \""
+				<< name << "\", not sending it again" << std::endl;
+			continue;
+		}
 
 		//TODO get path + name
-		std::string tpath = m_media[name].path;
+		const std::string &tpath = media_it->second.path;
 
 		// Use compatibility media on older clients
 		if (protocol_version < 37 &&

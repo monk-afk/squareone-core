@@ -232,6 +232,52 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 
 #define TEXTURENAME_ALLOWED_CHARS "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-"
 
+// Limits for metadata supplied by clients during initialization. These are
+// intentionally above the values produced by known clients while preventing
+// corrupt or hostile packets from reaching Lua and log output.
+constexpr size_t CLIENT_LANG_CODE_MAX_LEN = 32;
+constexpr size_t CLIENT_VERSION_INFO_MAX_LEN = 512;
+constexpr u16 CLIENT_FORMSPEC_VERSION_MAX = 255;
+constexpr size_t MEDIA_NAME_MAX_LEN = 255;
+
+inline bool is_valid_client_lang_code(const std::string &lang_code)
+{
+	return lang_code.size() <= CLIENT_LANG_CODE_MAX_LEN &&
+		string_allowed(lang_code,
+			"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-");
+}
+
+inline bool is_valid_client_version_info(const std::string &version_info)
+{
+	if (version_info.empty() || version_info.size() > CLIENT_VERSION_INFO_MAX_LEN ||
+			version_info.front() == '\0')
+		return false;
+
+	size_t separators = 0;
+	for (unsigned char c : version_info) {
+		if (c == '\0') {
+			if (++separators > 2)
+				return false;
+		} else if (!IS_ASCII_PRINTABLE_CHAR(c)) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+inline bool is_valid_client_formspec_version(u16 formspec_version)
+{
+	return formspec_version >= 1 &&
+		formspec_version <= CLIENT_FORMSPEC_VERSION_MAX;
+}
+
+inline bool is_valid_media_request_name(const std::string &name)
+{
+	return !name.empty() && name.size() <= MEDIA_NAME_MAX_LEN &&
+		string_allowed(name, TEXTURENAME_ALLOWED_CHARS);
+}
+
 typedef u16 session_t;
 
 enum ToClientCommand
