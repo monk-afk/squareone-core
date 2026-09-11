@@ -70,6 +70,7 @@ void PlayerSAO::finalize(RemotePlayer *player, const std::set<std::string> &priv
 	assert(player);
 	m_player = player;
 	m_privs = privs;
+	m_privs_cache_valid = true;
 }
 
 v3f PlayerSAO::getEyeOffset() const

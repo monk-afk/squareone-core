@@ -48,12 +48,16 @@ core.builtin_auth_handler = {
 		assert(type(name) == "string")
 		assert(type(password) == "string")
 		core.log('info', "Built-in authentication handler adding player '"..name.."'")
-		return core_auth.create({
+		local auth_entry = core_auth.create({
 			name = name,
 			password = password,
 			privileges = core.string_to_privs(core.settings:get("default_privs")),
 			last_login = -1,  -- Defer login time calculation until record_login (called by on_joinplayer)
 		})
+		if auth_entry then
+			core.notify_authentication_modified(name)
+		end
+		return auth_entry
 	end,
 	delete_auth = function(name)
 		assert(type(name) == "string")
@@ -62,7 +66,11 @@ core.builtin_auth_handler = {
 			return false
 		end
 		core.log('info', "Built-in authentication handler deleting player '"..name.."'")
-		return core_auth.delete(name)
+		local deleted = core_auth.delete(name)
+		if deleted then
+			core.notify_authentication_modified(name)
+		end
+		return deleted
 	end,
 	set_password = function(name, password)
 		assert(type(name) == "string")
@@ -107,6 +115,7 @@ core.builtin_auth_handler = {
 	end,
 	reload = function()
 		core_auth.reload()
+		core.notify_authentication_modified()
 		return true
 	end,
 	record_login = function(name)

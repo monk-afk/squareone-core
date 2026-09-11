@@ -19,6 +19,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 
 #include "server/activeobjectmgr.h"
 #include "server/luaentity_sao.h"
+#include "server/player_sao.h"
 #include <algorithm>
 #include <queue>
 #include "test.h"
@@ -50,6 +51,7 @@ public:
 	void testGetObjectsInsideRadius();
 	void testGetAddedActiveObjectsAroundPos();
 	void testLuaEntityDescription();
+	void testPlayerPrivilegeCache();
 };
 
 static TestServerActiveObjectMgr g_test_instance;
@@ -62,6 +64,7 @@ void TestServerActiveObjectMgr::runTests(IGameDef *gamedef)
 	TEST(testGetObjectsInsideRadius);
 	TEST(testGetAddedActiveObjectsAroundPos);
 	TEST(testLuaEntityDescription);
+	TEST(testPlayerPrivilegeCache);
 }
 
 void TestServerActiveObjectMgr::testLuaEntityDescription()
@@ -81,6 +84,20 @@ void TestServerActiveObjectMgr::testLuaEntityDescription()
 	// safe even if a mod supplies malformed item data.
 	item.accessObjectProperties()->wield_item = "default:stone invalid";
 	UASSERT(item.getDescription().find("LuaEntitySAO \"__builtin:item\" at ") == 0);
+}
+
+void TestServerActiveObjectMgr::testPlayerPrivilegeCache()
+{
+	PlayerSAO player(nullptr, nullptr, 1, false);
+	UASSERT(!player.hasCachedPrivileges());
+
+	std::set<std::string> privileges = {"interact", "shout"};
+	player.updatePrivileges(privileges, false);
+	UASSERT(player.hasCachedPrivileges());
+	UASSERT(player.getCachedPrivileges() == privileges);
+
+	player.invalidateCachedPrivileges();
+	UASSERT(!player.hasCachedPrivileges());
 }
 
 void clearSAOMgr(server::ActiveObjectMgr *saomgr)

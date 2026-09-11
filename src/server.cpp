@@ -1914,8 +1914,7 @@ void Server::SendPlayerPrivileges(session_t peer_id)
 	if(player->getPeerId() == PEER_ID_INEXISTENT)
 		return;
 
-	std::set<std::string> privs;
-	m_script->getAuth(player->getName(), NULL, &privs);
+	std::set<std::string> privs = getPlayerEffectivePrivs(player->getName());
 
 	NetworkPacket pkt(TOCLIENT_PRIVILEGES, 0, peer_id);
 	pkt << (u16) privs.size();
@@ -3356,8 +3355,17 @@ std::string Server::getStatusString()
 
 std::set<std::string> Server::getPlayerEffectivePrivs(const std::string &name)
 {
+	// Connected players already keep privileges for server-side enforcement.
+	// Offline lookups deliberately remain uncached.
+	RemotePlayer *player = m_env->getPlayer(name.c_str());
+	PlayerSAO *sao = player ? player->getPlayerSAO() : nullptr;
+	if (sao && sao->hasCachedPrivileges())
+		return sao->getCachedPrivileges();
+
 	std::set<std::string> privs;
 	m_script->getAuth(name, NULL, &privs);
+	if (sao)
+		sao->updatePrivileges(privs, isSingleplayer());
 	return privs;
 }
 
@@ -3379,8 +3387,11 @@ void Server::reportPrivsModified(const std::string &name)
 		RemotePlayer *player = m_env->getPlayer(name.c_str());
 		if (!player)
 			return;
-		SendPlayerPrivileges(player->getPeerId());
 		PlayerSAO *sao = player->getPlayerSAO();
+		// Refresh both the client packet and the enforcement cache below.
+		if (sao)
+			sao->invalidateCachedPrivileges();
+		SendPlayerPrivileges(player->getPeerId());
 		if(!sao)
 			return;
 		sao->updatePrivileges(

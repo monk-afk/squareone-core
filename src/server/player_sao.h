@@ -165,7 +165,11 @@ public:
 	{
 		m_privs = privs;
 		m_is_singleplayer = is_singleplayer;
+		m_privs_cache_valid = true;
 	}
+	const std::set<std::string> &getCachedPrivileges() const { return m_privs; }
+	bool hasCachedPrivileges() const { return m_privs_cache_valid; }
+	void invalidateCachedPrivileges() { m_privs_cache_valid = false; }
 
 	bool getCollisionBox(aabb3f *toset) const;
 	bool getSelectionBox(aabb3f *toset) const;
@@ -208,6 +212,7 @@ private:
 
 	// Cached privileges for enforcement
 	std::set<std::string> m_privs;
+	bool m_privs_cache_valid = false;
 	bool m_is_singleplayer;
 
 	u16 m_breath = PLAYER_MAX_BREATH_DEFAULT;
