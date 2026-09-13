@@ -437,7 +437,8 @@ void Server::handleCommand_ClientReady(NetworkPacket* pkt)
 
 	const u16 version_info_len = pkt->getU16(4);
 	const u32 base_size = 6 + version_info_len;
-	if (pkt->getSize() != base_size && pkt->getSize() != base_size + 2) {
+	if (pkt->getSize() < base_size ||
+			!is_valid_client_ready_suffix_size(pkt->getSize() - base_size)) {
 		reject_client_info("inconsistent packet length");
 		return;
 	}
@@ -446,8 +447,15 @@ void Server::handleCommand_ClientReady(NetworkPacket* pkt)
 	u16 formspec_ver = 1; // v1 for clients older than 5.1.0-dev
 	std::string full_ver;
 	*pkt >> major_ver >> minor_ver >> patch_ver >> reserved >> full_ver;
-	if (pkt->getRemainingBytes() == 2)
+	if (pkt->getRemainingBytes() >= CLIENT_READY_FORMSPEC_SIZE)
 		*pkt >> formspec_ver;
+	if (pkt->getRemainingBytes() == CLIENT_READY_SYSTEM_RAM_SIZE) {
+		// MultiCraft 2.0.12+ appends client-reported RAM. Consume it for wire
+		// compatibility, but do not expose this untrusted value.
+		u32 reported_system_ram;
+		*pkt >> reported_system_ram;
+		(void)reported_system_ram;
+	}
 
 	if (reserved != 0) {
 		reject_client_info("reserved field is non-zero");

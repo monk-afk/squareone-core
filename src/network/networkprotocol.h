@@ -232,13 +232,15 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 
 #define TEXTURENAME_ALLOWED_CHARS "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-"
 
-// Limits for metadata supplied by clients during initialization. These are
-// intentionally above the values produced by known clients while preventing
+// Limits and field sizes for metadata supplied by clients during initialization.
+// These are intentionally above the values produced by known clients while preventing
 // corrupt or hostile packets from reaching Lua and log output.
 constexpr size_t CLIENT_LANG_CODE_MAX_LEN = 32;
 constexpr size_t CLIENT_VERSION_INFO_MAX_LEN = 512;
 constexpr u16 CLIENT_FORMSPEC_VERSION_MAX = 255;
 constexpr size_t MEDIA_NAME_MAX_LEN = 255;
+constexpr size_t CLIENT_READY_FORMSPEC_SIZE = 2;
+constexpr size_t CLIENT_READY_SYSTEM_RAM_SIZE = 4;
 
 inline bool is_valid_client_lang_code(const std::string &lang_code)
 {
@@ -270,6 +272,13 @@ inline bool is_valid_client_formspec_version(u16 formspec_version)
 {
 	return formspec_version >= 1 &&
 		formspec_version <= CLIENT_FORMSPEC_VERSION_MAX;
+}
+
+inline bool is_valid_client_ready_suffix_size(size_t suffix_size)
+{
+	return suffix_size == 0 ||
+		suffix_size == CLIENT_READY_FORMSPEC_SIZE ||
+		suffix_size == CLIENT_READY_FORMSPEC_SIZE + CLIENT_READY_SYSTEM_RAM_SIZE;
 }
 
 inline bool is_valid_media_request_name(const std::string &name)
@@ -996,6 +1005,8 @@ enum ToServerCommand
 		u8 reserved
 		u16 len
 		u8[len] full_version_string
+		Optional: u16 formspec_version
+		Optional after formspec_version: u32 system_ram (MultiCraft 2.0.12+)
 	*/
 
 	TOSERVER_FIRST_SRP = 0x50,

@@ -142,6 +142,15 @@ void TestConnection::testClientInputValidation()
 	UASSERT(!is_valid_client_formspec_version(0));
 	UASSERT(!is_valid_client_formspec_version(CLIENT_FORMSPEC_VERSION_MAX + 1));
 
+	UASSERT(is_valid_client_ready_suffix_size(0));
+	UASSERT(is_valid_client_ready_suffix_size(CLIENT_READY_FORMSPEC_SIZE));
+	UASSERT(is_valid_client_ready_suffix_size(
+			CLIENT_READY_FORMSPEC_SIZE + CLIENT_READY_SYSTEM_RAM_SIZE));
+	UASSERT(!is_valid_client_ready_suffix_size(1));
+	UASSERT(!is_valid_client_ready_suffix_size(CLIENT_READY_SYSTEM_RAM_SIZE));
+	UASSERT(!is_valid_client_ready_suffix_size(
+			CLIENT_READY_FORMSPEC_SIZE + CLIENT_READY_SYSTEM_RAM_SIZE + 1));
+
 	UASSERT(is_valid_media_request_name("default_stone.png"));
 	UASSERT(!is_valid_media_request_name(""));
 	UASSERT(!is_valid_media_request_name("../secret"));
