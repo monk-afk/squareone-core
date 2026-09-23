@@ -424,6 +424,8 @@ void set_default_settings()
 	settings->setDefault("world_start_time", "6125");
 	settings->setDefault("server_unload_unused_data_timeout", "29");
 	settings->setDefault("max_objects_per_block", "64");
+	settings->setDefault("active_object_activation_max_per_step", "0");
+	settings->setDefault("active_object_activation_time_budget_ms", "0");
 	settings->setDefault("server_map_save_interval", "5.3");
 	settings->setDefault("chat_message_max_size", "500");
 	settings->setDefault("chat_message_limit_per_10sec", "5.0");

@@ -1526,6 +1526,18 @@
 #    type: int
 # max_objects_per_block = 64
 
+#    Maximum stored objects activated in one server step.
+#    Together with active_object_activation_time_budget_ms, 0 means unlimited.
+#    If both settings are 0, stored objects use legacy synchronous activation.
+#    type: int min: 0 max: 65535
+# active_object_activation_max_per_step = 0
+
+#    Wall-time budget for stored object activation in one server step.
+#    Together with active_object_activation_max_per_step, 0 means unlimited.
+#    If both settings are 0, stored objects use legacy synchronous activation.
+#    type: int min: 0 max: 60000
+# active_object_activation_time_budget_ms = 0
+
 #    See https://www.sqlite.org/pragma.html#pragma_synchronous
 #    type: enum values: 0, 1, 2
 # sqlite_synchronous = 2

@@ -469,6 +469,10 @@ ServerEnvironment::ServerEnvironment(ServerMap *map,
 
 	m_player_database = openPlayerDatabase(player_backend_name, path_world, conf);
 	m_auth_database = openAuthDatabase(auth_backend_name, path_world, conf);
+	m_active_object_activation_max_per_step =
+			g_settings->getU32("active_object_activation_max_per_step");
+	m_active_object_activation_time_budget_ms =
+			g_settings->getU32("active_object_activation_time_budget_ms");
 
 	m_compat_send_original_model = !server->getCompatPlayerModels().empty() &&
 			g_settings->getBool("compat_send_original_model");
@@ -476,6 +480,10 @@ ServerEnvironment::ServerEnvironment(ServerMap *map,
 
 ServerEnvironment::~ServerEnvironment()
 {
+	// Pending objects still belong to their MapBlocks. Only discard scheduling
+	// metadata before the map and environment are torn down.
+	m_active_object_activation_queue.clear();
+
 	// Clear active block list.
 	// This makes the next one delete all active objects.
 	m_active_blocks.clear();
@@ -1176,6 +1184,10 @@ u8 ServerEnvironment::findSunlight(v3s16 pos) const
 
 void ServerEnvironment::clearObjects(ClearObjectsMode mode)
 {
+	// Prevent a queued block from reactivating objects while clearObjects works.
+	// The objects themselves remain owned by their blocks until cleared below.
+	m_active_object_activation_queue.clear();
+
 	infostream << "ServerEnvironment::clearObjects(): "
 		<< "Removing all active objects" << std::endl;
 	auto cb_removal = [this] (ServerActiveObject *obj, u16 id) {
@@ -1358,6 +1370,9 @@ void ServerEnvironment::step(float dtime)
 		m_active_blocks.update(players, active_block_range, active_object_range,
 			blocks_removed, blocks_added);
 
+		for (const v3s16 &p : blocks_removed)
+			m_active_object_activation_queue.cancel(p);
+
 		/*
 			Handle removed blocks
 		*/
@@ -1389,6 +1404,8 @@ void ServerEnvironment::step(float dtime)
 			activateBlock(block);
 		}
 	}
+
+	processPendingObjectActivations();
 
 	/*
 		Mess around in active blocks
@@ -1901,59 +1918,33 @@ ServerActiveObject* ServerEnvironment::createSAO(ActiveObjectType type, v3f pos,
 */
 void ServerEnvironment::activateObjects(MapBlock *block, u32 dtime_s)
 {
-	if(block == NULL)
+	if (block == nullptr)
 		return;
 
 	// Ignore if no stored objects (to not set changed flag)
-	if(block->m_static_objects.m_stored.empty())
-		return;
-
-	verbosestream<<"ServerEnvironment::activateObjects(): "
-		<<"activating objects of block "<<PP(block->getPos())
-		<<" ("<<block->m_static_objects.m_stored.size()
-		<<" objects)"<<std::endl;
-	bool large_amount = (block->m_static_objects.m_stored.size() > g_settings->getU16("max_objects_per_block"));
-	if (large_amount) {
-		warningstream<<"suspiciously large amount of objects detected: "
-			<<block->m_static_objects.m_stored.size()<<" in "
-			<<PP(block->getPos())
-			<<"; removing all of them."<<std::endl;
-		// Clear stored list
-		block->m_static_objects.m_stored.clear();
-		block->raiseModified(MOD_STATE_WRITE_NEEDED,
-			MOD_REASON_TOO_MANY_OBJECTS);
+	if (block->m_static_objects.m_stored.empty()) {
+		m_active_object_activation_queue.cancel(block->getPos());
 		return;
 	}
 
-	// Activate stored objects
-	std::vector<StaticObject> new_stored;
-	for (const StaticObject &s_obj : block->m_static_objects.m_stored) {
-		// Create an active object from the data
-		ServerActiveObject *obj = createSAO((ActiveObjectType) s_obj.type, s_obj.pos,
-			s_obj.data);
-		// If couldn't create object, store static data back.
-		if (!obj) {
-			errorstream<<"ServerEnvironment::activateObjects(): "
-				<<"failed to create active object from static object "
-				<<"in block "<<PP(s_obj.pos/BS)
-				<<" type="<<(int)s_obj.type<<" data:"<<std::endl;
-			print_hexdump(verbosestream, s_obj.data);
+	verbosestream << "ServerEnvironment::activateObjects(): "
+			<< "activating objects of block " << PP(block->getPos())
+			<< " (" << block->m_static_objects.m_stored.size()
+			<< " objects)" << std::endl;
+	if (!validateStoredObjectCount(block))
+		return;
 
-			new_stored.push_back(s_obj);
-			continue;
-		}
-		verbosestream<<"ServerEnvironment::activateObjects(): "
-			<<"activated static object pos="<<PP(s_obj.pos/BS)
-			<<" type="<<(int)s_obj.type<<std::endl;
-		// This will also add the object to the active static list
-		addActiveObjectRaw(obj, false, dtime_s);
+	const u32 object_count = block->m_static_objects.m_stored.size();
+	if (objectActivationQueueEnabled()) {
+		m_active_object_activation_queue.enqueue(block->getPos(), dtime_s,
+				object_count);
+		return;
 	}
 
-	// Clear stored list
-	block->m_static_objects.m_stored.clear();
-	// Add leftover failed stuff to stored list
-	for (const StaticObject &s_obj : new_stored) {
-		block->m_static_objects.m_stored.push_back(s_obj);
+	// Preserve the legacy all-at-once behavior when both queue settings are 0.
+	for (u32 i = 0; i < object_count; ++i) {
+		if (!activateNextObject(block, dtime_s))
+			break;
 	}
 
 	/*
@@ -1964,6 +1955,117 @@ void ServerEnvironment::activateObjects(MapBlock *block, u32 dtime_s)
 		Thus, do not call block->raiseModified(MOD_STATE_WRITE_NEEDED).
 		Otherwise there would be a huge amount of unnecessary I/O.
 	*/
+}
+
+bool ServerEnvironment::objectActivationQueueEnabled() const
+{
+	return m_active_object_activation_max_per_step != 0 ||
+			m_active_object_activation_time_budget_ms != 0;
+}
+
+bool ServerEnvironment::validateStoredObjectCount(MapBlock *block)
+{
+	if (block->m_static_objects.m_stored.size() <=
+			g_settings->getU16("max_objects_per_block"))
+		return true;
+
+	warningstream << "suspiciously large amount of objects detected: "
+			<< block->m_static_objects.m_stored.size() << " in "
+			<< PP(block->getPos()) << "; removing all of them." << std::endl;
+	m_active_object_activation_queue.cancel(block->getPos());
+	block->m_static_objects.m_stored.clear();
+	block->raiseModified(MOD_STATE_WRITE_NEEDED, MOD_REASON_TOO_MANY_OBJECTS);
+	return false;
+}
+
+bool ServerEnvironment::activateNextObject(MapBlock *block, u32 dtime_s)
+{
+	const u64 start_time = porting::getTimeUs();
+	const bool attempted = activateNextStoredObject(
+			block->m_static_objects.m_stored, [this, block, dtime_s]
+			(const StaticObject &s_obj) {
+		ServerActiveObject *obj = createSAO((ActiveObjectType)s_obj.type,
+				s_obj.pos, s_obj.data);
+		if (!obj) {
+			errorstream << "ServerEnvironment::activateObjects(): "
+					<< "failed to create active object from static object "
+					<< "in block " << PP(s_obj.pos / BS)
+					<< " type=" << (int)s_obj.type << " data:" << std::endl;
+			print_hexdump(verbosestream, s_obj.data);
+			return false;
+		}
+
+		verbosestream << "ServerEnvironment::activateObjects(): "
+				<< "activated static object pos=" << PP(s_obj.pos / BS)
+				<< " type=" << (int)s_obj.type << std::endl;
+		// This also adds the object to the active static list. registerObject()
+		// deletes obj on failure, so the StaticObject transaction restores its
+		// independent copy to m_stored.
+		return addActiveObjectRaw(obj, false, dtime_s) != 0;
+	});
+
+	if (attempted && objectActivationQueueEnabled()) {
+		const u64 elapsed_us = porting::getTimeUs() - start_time;
+		g_profiler->avg("ServerEnv: static object activation [us]", elapsed_us);
+		reportSlowObjectActivation(block->getPos(), elapsed_us);
+	}
+	return attempted;
+}
+
+void ServerEnvironment::processPendingObjectActivations()
+{
+	if (!objectActivationQueueEnabled())
+		return;
+
+	const u64 start_time = porting::getTimeUs();
+	const u64 budget_us =
+			(u64)m_active_object_activation_time_budget_ms * 1000;
+	const u32 activated = m_active_object_activation_queue.process(
+			m_active_object_activation_max_per_step, budget_us,
+			[this] (const ActiveObjectActivationQueue::Entry &entry) {
+		if (!m_active_blocks.contains(entry.blockpos))
+			return ActiveObjectActivationQueue::Result::CANCELLED;
+
+		MapBlock *block = m_map->getBlockNoCreateNoEx(entry.blockpos);
+		if (!block || block->m_static_objects.m_stored.empty())
+			return ActiveObjectActivationQueue::Result::CANCELLED;
+
+		activateNextObject(block, entry.dtime_s);
+		return ActiveObjectActivationQueue::Result::CONSUMED;
+	}, [] () { return porting::getTimeUs(); });
+
+	g_profiler->avg("ServerEnv: pending static activation blocks [#]",
+			m_active_object_activation_queue.pendingBlockCount());
+	g_profiler->avg("ServerEnv: pending static activation objects [#]",
+			m_active_object_activation_queue.pendingObjectCount());
+	g_profiler->avg("ServerEnv: static object activations per step [#]", activated);
+	g_profiler->avg("ServerEnv: static object activation step [us]",
+			porting::getTimeUs() - start_time);
+}
+
+void ServerEnvironment::reportSlowObjectActivation(v3s16 blockpos, u64 elapsed_us)
+{
+	const u64 budget_us =
+			(u64)m_active_object_activation_time_budget_ms * 1000;
+	const u64 warning_threshold_us = std::max<u64>(50000, budget_us);
+	if (elapsed_us < warning_threshold_us)
+		return;
+
+	const u64 now = porting::getTimeUs();
+	if (m_last_slow_object_activation_warning_us != 0 &&
+			now - m_last_slow_object_activation_warning_us < 10000000) {
+		++m_slow_object_activation_warnings_suppressed;
+		return;
+	}
+
+	warningstream << "Static object activation in block " << PP(blockpos)
+			<< " took " << elapsed_us / 1000 << "ms";
+	if (m_slow_object_activation_warnings_suppressed != 0)
+		warningstream << " (" << m_slow_object_activation_warnings_suppressed
+				<< " similar warnings suppressed)";
+	warningstream << std::endl;
+	m_last_slow_object_activation_warning_us = now;
+	m_slow_object_activation_warnings_suppressed = 0;
 }
 
 /*

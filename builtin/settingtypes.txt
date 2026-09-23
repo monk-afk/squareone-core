@@ -1282,6 +1282,16 @@ server_unload_unused_data_timeout (Unload unused server data) int 29
 #    Maximum number of statically stored objects in a block.
 max_objects_per_block (Maximum objects per block) int 64
 
+#    Maximum stored objects activated in one server step.
+#    Together with active_object_activation_time_budget_ms, 0 means unlimited.
+#    If both settings are 0, stored objects use legacy synchronous activation.
+active_object_activation_max_per_step (Maximum stored object activations per step) int 0 0 65535
+
+#    Wall-time budget for stored object activation in one server step.
+#    Together with active_object_activation_max_per_step, 0 means unlimited.
+#    If both settings are 0, stored objects use legacy synchronous activation.
+active_object_activation_time_budget_ms (Stored object activation time budget) int 0 0 60000
+
 #    See https://www.sqlite.org/pragma.html#pragma_synchronous
 sqlite_synchronous (Synchronous SQLite) enum 2 0,1,2
 
