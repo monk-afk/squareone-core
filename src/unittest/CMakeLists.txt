@@ -3,7 +3,6 @@ set (UNITTEST_SRCS
 	${CMAKE_CURRENT_SOURCE_DIR}/test_address.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/test_authdatabase.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/test_activeobject.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/test_activeobjectactivation.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/test_areastore.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/test_ban.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/test_collision.cpp

@@ -23,7 +23,6 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "environment.h"
 #include "mapnode.h"
 #include "settings.h"
-#include "server/active_object_activation_queue.h"
 #include "server/activeobjectmgr.h"
 #include "util/numeric.h"
 #include <algorithm>
@@ -421,11 +420,6 @@ private:
 		Convert stored objects from block to active
 	*/
 	void activateObjects(MapBlock *block, u32 dtime_s);
-	bool activateNextObject(MapBlock *block, u32 dtime_s);
-	void processPendingObjectActivations();
-	bool objectActivationQueueEnabled() const;
-	bool validateStoredObjectCount(MapBlock *block);
-	void reportSlowObjectActivation(v3s16 blockpos, u64 elapsed_us);
 
 	/*
 		Convert objects that are not in active blocks to static.
@@ -467,11 +461,6 @@ private:
 	IntervalLimiter m_object_management_interval;
 	// List of active blocks
 	ActiveBlockList m_active_blocks;
-	ActiveObjectActivationQueue m_active_object_activation_queue;
-	u32 m_active_object_activation_max_per_step = 0;
-	u32 m_active_object_activation_time_budget_ms = 0;
-	u64 m_last_slow_object_activation_warning_us = 0;
-	u32 m_slow_object_activation_warnings_suppressed = 0;
 	IntervalLimiter m_active_blocks_management_interval;
 	IntervalLimiter m_active_block_modifier_interval;
 	IntervalLimiter m_active_blocks_nodemetadata_interval;
