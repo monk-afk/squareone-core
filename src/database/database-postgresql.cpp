@@ -20,6 +20,9 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 
 #if USE_POSTGRESQL
 
+#include <algorithm>
+#include <sstream>
+
 #include "database-postgresql.h"
 
 #ifdef _WIN32
@@ -132,6 +135,52 @@ PGresult *Database_PostgreSQL::checkResults(PGresult *result, bool clear)
 		PQclear(result);
 
 	return result;
+}
+
+PGresult *Database_PostgreSQL::execParams(const std::string &query,
+		const std::vector<std::string> &params, bool clear)
+{
+	std::vector<const char *> values;
+	values.reserve(params.size());
+	for (const std::string &param : params)
+		values.push_back(param.c_str());
+
+	return checkResults(PQexecParams(m_conn, query.c_str(),
+		static_cast<int>(values.size()), NULL,
+		values.data(), NULL, NULL, 0), clear);
+}
+
+void Database_PostgreSQL::execInsertBatch(const std::string &query_prefix,
+		const std::string &common_value, const std::vector<std::string> &casts,
+		const std::vector<std::vector<std::string>> &rows)
+{
+	static const size_t rows_per_batch = 512;
+
+	for (size_t begin = 0; begin < rows.size(); begin += rows_per_batch) {
+		const size_t end = std::min(begin + rows_per_batch, rows.size());
+		std::ostringstream query;
+		std::vector<std::string> params;
+		params.reserve(1 + (end - begin) * casts.size());
+		params.push_back(common_value);
+
+		query << query_prefix << " VALUES ";
+		for (size_t row_index = begin; row_index < end; row_index++) {
+			const std::vector<std::string> &row = rows[row_index];
+			if (row.size() != casts.size())
+				throw DatabaseException("PostgreSQL batch insert field count mismatch");
+
+			if (row_index != begin)
+				query << ',';
+			query << "($1";
+			for (size_t field_index = 0; field_index < row.size(); field_index++) {
+				params.push_back(row[field_index]);
+				query << ", $" << params.size() << casts[field_index];
+			}
+			query << ')';
+		}
+
+		execParams(query.str(), params);
+	}
 }
 
 void Database_PostgreSQL::createTableIfNotExists(const std::string &table_name,
@@ -487,51 +536,47 @@ void PlayerDatabasePostgreSQL::savePlayer(RemotePlayer *player)
 	else
 		execPrepared("save_player", 8, values, true, false);
 
-	// Write player inventories
+	// Write player inventories. Use multi-row inserts to avoid a synchronous
+	// PostgreSQL round trip for every inventory list and slot.
 	execPrepared("remove_player_inventories", 1, rmvalues);
 	execPrepared("remove_player_inventory_items", 1, rmvalues);
 
 	std::vector<const InventoryList*> inventory_lists = sao->getInventory()->getLists();
+	std::vector<std::vector<std::string>> inventory_rows;
+	std::vector<std::vector<std::string>> inventory_item_rows;
+	inventory_rows.reserve(inventory_lists.size());
 	for (u16 i = 0; i < inventory_lists.size(); i++) {
 		const InventoryList* list = inventory_lists[i];
 		const std::string &name = list->getName();
 		std::string width = itos(list->getWidth()),
 			inv_id = itos(i), lsize = itos(list->getSize());
 
-		const char* inv_values[] = {
-			player->getName(),
-			inv_id.c_str(),
-			width.c_str(),
-			name.c_str(),
-			lsize.c_str()
-		};
-		execPrepared("add_player_inventory", 5, inv_values);
+		inventory_rows.push_back({inv_id, width, name, lsize});
 
 		for (u32 j = 0; j < list->getSize(); j++) {
 			std::ostringstream os;
 			list->getItem(j).serialize(os);
 			std::string itemStr = os.str(), slotId = itos(j);
 
-			const char* invitem_values[] = {
-				player->getName(),
-				inv_id.c_str(),
-				slotId.c_str(),
-				itemStr.c_str()
-			};
-			execPrepared("add_player_inventory_item", 4, invitem_values);
+			inventory_item_rows.push_back({inv_id, slotId, itemStr});
 		}
 	}
+	execInsertBatch("INSERT INTO player_inventories "
+			"(player, inv_id, inv_width, inv_name, inv_size)", player->getName(),
+		{"::int", "::int", "", "::int"}, inventory_rows);
+	execInsertBatch("INSERT INTO player_inventory_items "
+			"(player, inv_id, slot_id, item)", player->getName(),
+		{"::int", "::int", ""}, inventory_item_rows);
 
 	execPrepared("remove_player_metadata", 1, rmvalues);
 	const StringMap &attrs = sao->getMeta().getStrings();
+	std::vector<std::vector<std::string>> metadata_rows;
+	metadata_rows.reserve(attrs.size());
 	for (const auto &attr : attrs) {
-		const char *meta_values[] = {
-			player->getName(),
-			attr.first.c_str(),
-			attr.second.c_str()
-		};
-		execPrepared("save_player_metadata", 3, meta_values);
+		metadata_rows.push_back({attr.first, attr.second});
 	}
+	execInsertBatch("INSERT INTO player_metadata (player, attr, value)",
+		player->getName(), {"", ""}, metadata_rows);
 	endSave();
 
 	player->onSuccessfulSave();

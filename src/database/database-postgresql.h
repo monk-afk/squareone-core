@@ -20,6 +20,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #pragma once
 
 #include <string>
+#include <vector>
 #include <libpq-fe.h>
 #include "database.h"
 #include "util/basic_macros.h"
@@ -81,6 +82,12 @@ protected:
 		return execPrepared(stmtName, paramsNumber,
 			(const void **)params, NULL, NULL, clear, nobinary);
 	}
+
+	PGresult *execParams(const std::string &query,
+		const std::vector<std::string> &params, bool clear = true);
+	void execInsertBatch(const std::string &query_prefix,
+		const std::string &common_value, const std::vector<std::string> &casts,
+		const std::vector<std::vector<std::string>> &rows);
 
 	void createTableIfNotExists(const std::string &table_name, const std::string &definition);
 	void verifyDatabase();
